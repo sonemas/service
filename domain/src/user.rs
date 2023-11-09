@@ -1,23 +1,9 @@
-use argon2::{
-    password_hash::{
-        rand_core::OsRng,
-        PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
-        Error as ArgonError,
-    },
-    Argon2
-};
-use svc_std::{primitives::{Email, validation_error::Error as ValidationError, id::Uuid}, traits::{authenticatable::Authenticatable, validatable::Validatable}};
+use svc_std::{primitives::{Email, error::Error as ValidationError, id::Uuid, Password}, traits::{authenticatable::Authenticatable, password_hasher::{PasswordHasher, argon2::Argon2PasswordHasher}}};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Error {
     HashingError(String),
     ValidationError(ValidationError),
-}
-
-impl From<ArgonError> for Error {
-    fn from(value: ArgonError) -> Self {
-        Self::HashingError(value.to_string())
-    }
 }
 
 impl From<ValidationError> for Error {
@@ -37,109 +23,106 @@ impl std::error::Error for Error {}
 pub struct User {
     id: Uuid,
     email: Email,
-    password_hash: String,
+    password: Password<Argon2PasswordHasher>,
 }
 
 impl User {
-    fn builder() -> UserBuilder<HasId, NoEmail, NoPasswordHash> {
+    pub fn builder() -> UserBuilder<HasId, NoEmail, NoPassword> {
         UserBuilder { 
             id: HasId(Uuid::default()), 
             email: NoEmail, 
-            password_hash: NoPasswordHash, 
+            password: NoPassword, 
         }
     }
 }
 
 impl Authenticatable<Error> for User {
     fn confirm_password(&self, password: &str) -> Result<(), Error> {
-        let parsed_hash = PasswordHash::new(&self.password_hash)?;
-        Argon2::default().verify_password(password.as_bytes(), &parsed_hash)?;
-        Ok(())
+        Ok(self.password.confirm(password)?)
     }
 }
 
-impl Validatable<Error> for User {
-    fn validate(&self) -> svc_std::traits::validatable::Result<Error> {
-        self.id.validate()?;
-        self.email.validate()?;
-        Ok(())
-    }
-}
-
+#[derive(Debug, PartialEq)]
 pub struct NoId;
+#[derive(Debug, PartialEq)]
 pub struct HasId(Uuid);
 
+#[derive(Debug, PartialEq)]
 pub struct NoEmail;
+#[derive(Debug, PartialEq)]
 pub struct HasEmail(Email);
 
-pub struct NoPasswordHash;
-pub struct HasPasswordHash(String);
+#[derive(Debug, PartialEq)]
+pub struct NoPassword;
+#[derive(Debug, PartialEq)]
+pub struct HasPassword(Password<Argon2PasswordHasher>);
 
+#[derive(Debug, PartialEq)]
 pub struct UserBuilder<I, E, P> {
     id: I,
     email: E,
-    password_hash: P,
+    password: P,
 }
 
 impl<I, E, P> UserBuilder<I, E, P> {
-    fn id_from_str(self, id: &'static str) -> Result<UserBuilder<HasId, E, P>, Error> {
-        let Self { email, password_hash, .. } = self;
+    pub fn id_from_str(self, id: &'static str) -> Result<UserBuilder<HasId, E, P>, Error> {
+        let Self { email, password, .. } = self;
         Ok(UserBuilder { 
             id: HasId(id.try_into()?), 
             email,
-            password_hash 
+            password 
         })
     }
 
-    fn id(self) -> Result<UserBuilder<HasId, E, P>, Error> {
-        let Self { email, password_hash, .. } = self;
+    pub fn id(self) -> Result<UserBuilder<HasId, E, P>, Error> {
+        let Self { email, password, .. } = self;
         Ok(UserBuilder { 
             id: HasId(Uuid::new()), 
             email,
-            password_hash 
+            password 
         })
     }
 }
 
 impl<I, P> UserBuilder<I, NoEmail, P> {
-    fn email(self, email: &'static str) -> Result<UserBuilder<I, HasEmail, P>, Error> {
-        let Self { id, password_hash, .. } = self;
+    pub fn email(self, email: &'static str) -> Result<UserBuilder<I, HasEmail, P>, Error> {
+        let Self { id, password, .. } = self;
         Ok(UserBuilder { 
             id, 
             email: HasEmail(Email::new(email)?),
-            password_hash 
+            password 
         })
     }
 }
 
-impl<I, E> UserBuilder<I, E, NoPasswordHash> {
-    fn password(self, password: &'static str) -> Result<UserBuilder<I, E, HasPasswordHash>, Error> {
+impl<I, E> UserBuilder<I, E, NoPassword> {
+    pub fn password(self, password: &'static str) -> Result<UserBuilder<I, E, HasPassword>, Error> {
         let Self { id, email, .. } = self;
-        let salt = SaltString::generate(&mut OsRng);
-        let argon2 = Argon2::default();
-        let password_hash = argon2.hash_password(password.as_bytes(), &salt)?.to_string();
+        let password = Password::new(password)?;
 
         Ok(UserBuilder { 
             id, 
             email: email,
-            password_hash: HasPasswordHash(password_hash) 
+            password: HasPassword(password) 
         })
     }
 }
 
-impl UserBuilder<HasId, HasEmail, HasPasswordHash> {
-    fn build(self) -> User {
-        let Self { id, email, password_hash } = self;
+impl UserBuilder<HasId, HasEmail, HasPassword> {
+    pub fn build(self) -> User {
+        let Self { id, email, password } = self;
         User{
             id: id.0, 
             email: email.0, 
-            password_hash: password_hash.0
+            password: password.0
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::user;
+
     use super::*;
 
     #[test]
@@ -149,5 +132,11 @@ mod tests {
             .password("testtest").unwrap()
             .build();
         assert!(user.confirm_password("testtest").is_ok());
+    }
+
+    #[test]
+    fn user_validation_works() {
+        assert_eq!(User::builder().email("blabla"), Err(user::Error::ValidationError(ValidationError::InvalidEmailAddress)));
+        assert_eq!(User::builder().id_from_str("blabla"), Err(user::Error::ValidationError(ValidationError::InvalidID)));
     }
 }

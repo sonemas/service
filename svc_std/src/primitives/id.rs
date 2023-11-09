@@ -1,7 +1,7 @@
 use crate::traits::validatable::Validatable;
 use uuid::Uuid as CoreUuid;
 
-use super::validation_error::Error;
+use super::error::Error;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Uuid(String);
