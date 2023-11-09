@@ -24,19 +24,21 @@ impl<T: PasswordHasher> ToString for Password<T> {
 
 impl<T: PasswordHasher> Validatable<Error> for Password<T> {
     fn validate(&self) -> crate::traits::validatable::Result<Error> {
-        let re = Regex::new(r"^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[#$%/()=¿?*+-])(?=(?:([\w\d])\1?(?!\1\1)))(?!(?=.*(palabra1|palabra2|palabraN))).{8,20}$")?;
-        if !re.is_match(&self.0).unwrap_or(false) { return Err(Error::InvalidPassword) }
-        Ok(())
+        Self::validate_value(&self.0)
     }
 }
 
 impl<T: PasswordHasher> Password<T> {
     pub fn new(value: &'static str) -> Result<Self, Error> {
-        // TODO: This is ugly... Refactor to something nicer.
-        let v = Self(value.to_string(), PhantomData);
-        v.validate()?;
+        Self::validate_value(value)?;
         let password_hash = T::hash(value)?;
         Ok(Self(password_hash.to_string(), PhantomData))
+    }
+
+    fn validate_value(value: &str) -> Result<(), Error> {
+        let re = Regex::new(r"^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[#$%/()=¿?*+-])(?=(?:([\w\d])\1?(?!\1\1)))(?!(?=.*(palabra1|palabra2|palabraN))).{8,20}$")?;
+        if !re.is_match(value).unwrap_or(false) { return Err(Error::InvalidPassword) }
+        Ok(())
     }
 
     pub fn confirm(&self, password: &str) -> Result<(), Error> {
