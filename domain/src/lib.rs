@@ -1,12 +1,5 @@
+//! Domain layer for the service.
+//!
+//! Contains business and application logic.
+
 mod user;
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-
-//     #[test]
-//     fn it_works() {
-//         let result = add(2, 2);
-//         assert_eq!(result, 4);
-//     }
-// }
