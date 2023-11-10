@@ -1,68 +1,40 @@
-#![allow(dead_code)] // TODO: Remove once user is implemented elsewhere.
-use std::time::SystemTime;
+use crate::traits::{PasswordHasher, Authenticatable};
 
-use svc_std::{
-    password_hasher::argon2::Argon2PasswordHasher,
-    primitives::{error::Error as StdError, id::Uuid, Email, Password, ValidationError},
-    traits::authenticatable::Authenticatable,
-};
+use super::{Email, Password, Error};
 
-/// User errors.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Error {
-    Validation(ValidationError),
-    Authentication,
-
-    /// Used to collect errors that normally shouldn't occur.
-    Other(String),
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for Error {}
-
-impl From<StdError> for Error {
-    fn from(value: StdError) -> Self {
-        match value {
-            StdError::InvalidPassword => Self::Authentication,
-            StdError::Validation(err) => Self::Validation(err),
-            StdError::PasswordHashingError(err) => {
-                Self::Other(format!("password hashing error: {}", err))
-            }
-            StdError::RegexError(err) => Self::Other(format!("regex error: {}", err)),
-        }
-    }
+pub trait Config {
+    type Id: Default + PartialEq;
+    type PasswordHasher: PasswordHasher;
+    type DateTime: Clone + Copy + Default + Eq + PartialEq;
 }
 
 /// Entity for user data and logic.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct User {
-    id: Uuid,
+pub struct User<T: Config> {
+    id: T::Id,
     email: Email,
-    password: Password<Argon2PasswordHasher>,
-    created: SystemTime,
-    modified: SystemTime,
+    password: Password<T::PasswordHasher>,
+    created: T::DateTime,
+    modified: T::DateTime,
 }
 
-impl User {
+impl<T: Config> User<T> {
     /// Initializes a new user builder.
-    pub fn builder() -> UserBuilder<HasId, NoEmail, NoPassword, HasCreated, HasModified> {
-        let now = SystemTime::now();
+    pub fn builder() -> UserBuilder<T, HasId<T>, NoEmail, NoPassword, HasCreated<T>, HasModified<T>> {
+        let now = T::DateTime::default();
 
         UserBuilder {
-            id: HasId(Uuid::default()),
+            id: HasId(T::Id::default()),
             email: NoEmail,
             password: NoPassword,
             created: HasCreated(now),
             modified: HasModified(now),
+            phantom: std::marker::PhantomData,
         }
     }
 }
 
-impl Authenticatable<Error> for User {
+impl<T: Config> Authenticatable<Error> for User<T> {
     fn confirm_password(&self, password: &str) -> Result<(), Error> {
         Ok(self.password.confirm(password)?)
     }
@@ -76,7 +48,7 @@ pub struct NoId;
 
 /// Builder state indicating that an id has been set.
 #[derive(Debug, PartialEq)]
-pub struct HasId(Uuid);
+pub struct HasId<T: Config>(T::Id);
 
 /// Builder state indicating that no email has been set.
 #[derive(Debug, PartialEq)]
@@ -92,7 +64,7 @@ pub struct NoPassword;
 
 /// Builder state indicating that a password has been set.
 #[derive(Debug, PartialEq)]
-pub struct HasPassword(Password<Argon2PasswordHasher>);
+pub struct HasPassword<T: Config>(Password<T::PasswordHasher>);
 
 /// Builder state indicating that no creation time has been set.
 #[derive(Debug, PartialEq)]
@@ -100,7 +72,7 @@ pub struct NoCreated;
 
 /// Builder state indicating that a creation time has been set.
 #[derive(Debug, PartialEq)]
-pub struct HasCreated(SystemTime);
+pub struct HasCreated<T: Config>(T::DateTime);
 
 /// Builder state indicating that no modification time has been set.
 #[derive(Debug, PartialEq)]
@@ -108,67 +80,53 @@ pub struct NoModified;
 
 /// Builder state indicating that a modification time has been set.
 #[derive(Debug, PartialEq)]
-pub struct HasModified(SystemTime);
+pub struct HasModified<T: Config>(T::DateTime);
 
 /// Builder for User objects.
 #[derive(Debug, PartialEq)]
-pub struct UserBuilder<I, E, P, C, M> {
+pub struct UserBuilder<T:Config, I, E, P, C, M> {
     id: I,
     email: E,
     password: P,
     created: C,
     modified: M,
+    phantom: std::marker::PhantomData<T>,
 }
 
 /// Builder functions to set builder properties.
-impl<I, E, P, C, M> UserBuilder<I, E, P, C, M> {
+impl<T: Config, I, E, P, C, M> UserBuilder<T, I, E, P, C, M> {
     /// Sets the id with the provided uuid.
     ///
     /// Returns a validation error is the provided input is invalid.
-    pub fn id_from_str(self, id: &'static str) -> Result<UserBuilder<HasId, E, P, C, M>, Error> {
+    pub fn id(self, id: T::Id) -> UserBuilder<T, HasId<T>, E, P, C, M> {
         let Self {
             email,
             password,
             created,
             modified,
+            phantom,
             ..
         } = self;
-        Ok(UserBuilder {
-            id: HasId(id.try_into()?),
+        UserBuilder {
+            id: HasId(id),
             email,
             password,
             created,
             modified,
-        })
-    }
-
-    /// Sets the id with a random uuid.
-    pub fn id(self) -> Result<UserBuilder<HasId, E, P, C, M>, Error> {
-        let Self {
-            email,
-            password,
-            created,
-            modified,
-            ..
-        } = self;
-        Ok(UserBuilder {
-            id: HasId(Uuid::new()),
-            email,
-            password,
-            created,
-            modified,
-        })
+            phantom,
+        }
     }
 
     /// Sets the email with the provided input.
     ///
     /// Returns a validation error is the provided input is invalid.
-    pub fn email(self, email: &'static str) -> Result<UserBuilder<I, HasEmail, P, C, M>, Error> {
+    pub fn email(self, email: &'static str) -> Result<UserBuilder<T, I, HasEmail, P, C, M>, Error> {
         let Self {
             id,
             password,
             created,
             modified,
+            phantom,
             ..
         } = self;
         Ok(UserBuilder {
@@ -177,6 +135,7 @@ impl<I, E, P, C, M> UserBuilder<I, E, P, C, M> {
             password,
             created,
             modified,
+            phantom,
         })
     }
 
@@ -186,12 +145,13 @@ impl<I, E, P, C, M> UserBuilder<I, E, P, C, M> {
     pub fn password(
         self,
         password: &'static str,
-    ) -> Result<UserBuilder<I, E, HasPassword, C, M>, Error> {
+    ) -> Result<UserBuilder<T, I, E, HasPassword<T>, C, M>, Error> {
         let Self {
             id,
             email,
             created,
             modified,
+            phantom,
             ..
         } = self;
         let password = Password::new(password)?;
@@ -202,16 +162,18 @@ impl<I, E, P, C, M> UserBuilder<I, E, P, C, M> {
             password: HasPassword(password),
             created,
             modified,
+            phantom,
         })
     }
 
     /// Sets the creation time with the provided input.
-    pub fn created(self, created: SystemTime) -> UserBuilder<I, E, P, HasCreated, M> {
+    pub fn created(self, created: T::DateTime) -> UserBuilder<T, I, E, P, HasCreated<T>, M> {
         let Self {
             id,
             email,
             password,
             modified,
+            phantom,
             ..
         } = self;
 
@@ -221,16 +183,18 @@ impl<I, E, P, C, M> UserBuilder<I, E, P, C, M> {
             password,
             created: HasCreated(created),
             modified,
+            phantom,
         }
     }
 
     /// Sets the creation time with the provided input.
-    pub fn modified(self, modified: SystemTime) -> UserBuilder<I, E, P, C, HasModified> {
+    pub fn modified(self, modified: T::DateTime) -> UserBuilder<T, I, E, P, C, HasModified<T>> {
         let Self {
             id,
             email,
             password,
             created,
+            phantom,
             ..
         } = self;
 
@@ -240,21 +204,23 @@ impl<I, E, P, C, M> UserBuilder<I, E, P, C, M> {
             password,
             created,
             modified: HasModified(modified),
+            phantom,
         }
     }
 }
 
-impl UserBuilder<HasId, HasEmail, HasPassword, HasCreated, HasModified> {
+impl<T: Config> UserBuilder<T, HasId<T>, HasEmail, HasPassword<T>, HasCreated<T>, HasModified<T>> {
     /// Builds the a user instance.
     ///
     /// Can only be used when all states have been set.
-    pub fn build(self) -> User {
+    pub fn build(self) -> User<T> {
         let Self {
             id,
             email,
             password,
             created,
             modified,
+            ..
         } = self;
         User {
             id: id.0,
@@ -268,32 +234,24 @@ impl UserBuilder<HasId, HasEmail, HasPassword, HasCreated, HasModified> {
 
 #[cfg(test)]
 mod tests {
+    use crate::{primitives::{Uuid, DateTime}, password_hasher::argon2::Argon2PasswordHasher};
     use super::*;
+
+    struct App;
+    impl Config for App {
+        type Id = Uuid;
+        type PasswordHasher = Argon2PasswordHasher;
+        type DateTime = DateTime;
+    }
 
     #[test]
     fn user_builder_works() {
-        let user = User::builder()
+        let user = User::<App>::builder()
             .email("john.doe@example.com")
             .unwrap()
             .password("mmholAhsbC123*")
             .unwrap()
             .build();
         assert!(user.confirm_password("mmholAhsbC123*").is_ok());
-    }
-
-    #[test]
-    fn user_validation_works() {
-        assert_eq!(
-            User::builder().email("blabla"),
-            Err(Error::Validation(ValidationError::Email))
-        );
-        assert_eq!(
-            User::builder().id_from_str("blabla"),
-            Err(Error::Validation(ValidationError::Id))
-        );
-        assert_eq!(
-            User::builder().password("blabla"),
-            Err(Error::Validation(ValidationError::Password))
-        );
     }
 }
