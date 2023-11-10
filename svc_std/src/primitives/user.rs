@@ -1,12 +1,13 @@
-use crate::traits::{PasswordHasher, Authenticatable};
-
-use super::{Email, Password, Error};
+use super::{Email, Error, Password};
+use crate::traits::{Authenticatable, PasswordHasher};
 
 pub trait Config {
     type Id: Default + PartialEq;
     type PasswordHasher: PasswordHasher;
     type DateTime: Clone + Copy + Default + Eq + PartialEq;
 }
+
+pub type Result<T> = core::result::Result<T, Error>;
 
 /// Entity for user data and logic.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -20,7 +21,8 @@ pub struct User<T: Config> {
 
 impl<T: Config> User<T> {
     /// Initializes a new user builder.
-    pub fn builder() -> UserBuilder<T, HasId<T>, NoEmail, NoPassword, HasCreated<T>, HasModified<T>> {
+    pub fn builder() -> UserBuilder<T, HasId<T>, NoEmail, NoPassword, HasCreated<T>, HasModified<T>>
+    {
         let now = T::DateTime::default();
 
         UserBuilder {
@@ -35,8 +37,8 @@ impl<T: Config> User<T> {
 }
 
 impl<T: Config> Authenticatable<Error> for User<T> {
-    fn confirm_password(&self, password: &str) -> Result<(), Error> {
-        Ok(self.password.confirm(password)?)
+    fn confirm_password(&self, password: &str) -> Result<()> {
+        self.password.confirm(password)
     }
 }
 
@@ -84,7 +86,7 @@ pub struct HasModified<T: Config>(T::DateTime);
 
 /// Builder for User objects.
 #[derive(Debug, PartialEq)]
-pub struct UserBuilder<T:Config, I, E, P, C, M> {
+pub struct UserBuilder<T: Config, I, E, P, C, M> {
     id: I,
     email: E,
     password: P,
@@ -120,7 +122,7 @@ impl<T: Config, I, E, P, C, M> UserBuilder<T, I, E, P, C, M> {
     /// Sets the email with the provided input.
     ///
     /// Returns a validation error is the provided input is invalid.
-    pub fn email(self, email: &'static str) -> Result<UserBuilder<T, I, HasEmail, P, C, M>, Error> {
+    pub fn email(self, email: &'static str) -> Result<UserBuilder<T, I, HasEmail, P, C, M>> {
         let Self {
             id,
             password,
@@ -145,7 +147,7 @@ impl<T: Config, I, E, P, C, M> UserBuilder<T, I, E, P, C, M> {
     pub fn password(
         self,
         password: &'static str,
-    ) -> Result<UserBuilder<T, I, E, HasPassword<T>, C, M>, Error> {
+    ) -> Result<UserBuilder<T, I, E, HasPassword<T>, C, M>> {
         let Self {
             id,
             email,
@@ -234,8 +236,11 @@ impl<T: Config> UserBuilder<T, HasId<T>, HasEmail, HasPassword<T>, HasCreated<T>
 
 #[cfg(test)]
 mod tests {
-    use crate::{primitives::{Uuid, DateTime}, password_hasher::argon2::Argon2PasswordHasher};
     use super::*;
+    use crate::{
+        password_hasher::argon2::Argon2PasswordHasher,
+        primitives::{DateTime, Uuid},
+    };
 
     struct App;
     impl Config for App {
